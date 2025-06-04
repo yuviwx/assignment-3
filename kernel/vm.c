@@ -490,21 +490,23 @@ uint64 map_shared_pages(struct proc* src_proc, struct proc* dst_proc,
     a = PGROUNDDOWN(src_va);
     last = PGROUNDDOWN(src_va + size - 1);
     //new page in distension
+    acquire(&dst_proc->lock);
     dst_va = PGROUNDUP(dst_proc->sz);
-    
+    org_sz = dst_proc->sz; // for cleanup
+    release(&dst_proc->lock);
+
     //runner
     cur_dst_va = dst_va;
     offset = src_va - a;
     
-    //for cleanup
-    org_sz = dst_proc->sz;
-
     for(;;){
       //get pa
+      acquire(&src_proc->lock);
       if((pte_src = walk(src_proc->pagetable, a, 0)) == 0){
         cleanup(dst_proc, dst_va, (cur_dst_va - dst_va) / PGSIZE, org_sz);
         return -1;
       }
+      release(&src_proc->lock);
 
       if(!(*pte_src & PTE_V) || !(*pte_src & PTE_U)) {
         cleanup(dst_proc, dst_va, (cur_dst_va - dst_va) / PGSIZE, org_sz);
@@ -514,12 +516,17 @@ uint64 map_shared_pages(struct proc* src_proc, struct proc* dst_proc,
       pa = PTE2PA(*pte_src);
       flags = PTE_FLAGS(*pte_src) | PTE_S;
 
+      acquire(&dst_proc->lock);
       if(mappages(dst_proc->pagetable, cur_dst_va, PGSIZE, pa, flags) != 0) {
         cleanup(dst_proc, dst_va, (cur_dst_va - dst_va) / PGSIZE, org_sz);
         return -1;
       }
+      release(&dst_proc->lock);
+
       // Update process size after each successful mapping
+      acquire(&src_proc->lock);
       dst_proc->sz = cur_dst_va + PGSIZE;
+      release(&src_proc->lock);
       
       //update and ends the loop
       if(a == last)
