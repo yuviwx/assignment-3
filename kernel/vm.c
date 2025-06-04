@@ -543,9 +543,9 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
     release(&dst_proc->lock);
 
     // Update process size after each successful mapping
-    acquire(&src_proc->lock);
+    acquire(&dst_proc->lock);
     dst_proc->sz = cur_dst_va + PGSIZE;
-    release(&src_proc->lock);
+    release(&dst_proc->lock);
 
     // update and ends the loop
     if (a == last)
@@ -571,13 +571,13 @@ uint64 unmap_shared_pages(struct proc *p, uint64 addr, uint64 size)
   npages = (last - a)/PGSIZE + 1;
 
   // Check if the mapping is exist & shared
+  acquire(&p->lock);
   for(uint64 curr = a; curr <= last; curr += PGSIZE){
-    acquire(&p->lock);
     if((pte = walk(p->pagetable, curr, 0)) == 0 || !(*pte & PTE_S)){
       return -1;
     }
-    release(&p->lock);
   }
+  release(&p->lock);
 
   acquire(&p->lock);
   // Unmap
@@ -586,5 +586,7 @@ uint64 unmap_shared_pages(struct proc *p, uint64 addr, uint64 size)
   // reSize
   if(a + npages*PGSIZE == p->sz)
     p->sz = a;
-  release(&p->lock);  
+  release(&p->lock);
+  
+  return 0;
 }
