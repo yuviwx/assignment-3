@@ -453,46 +453,74 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
       Update Process Size and Return
   */
 
-uint64 map_shared_pages(struct proc* src_proc, struct proc* dst_proc, 
-                        uint64 src_va, uint64 size) {
-    if (src_proc == 0 || dst_proc == 0 || size == 0 || src_va >= MAXVA) {
-        return -1; // Invalid input
+  static void cleanup(struct proc* dst_proc, uint64 dst_va, 
+                                   uint64 pages_mapped, uint64 original_sz)
+{
+    if(pages_mapped > 0) {
+        uvmunmap(dst_proc->pagetable, dst_va, pages_mapped, 0);
+    }    
+    // Restore the original process size
+    dst_proc->sz = original_sz;
+}
+
+uint64 map_shared_pages(struct proc* src_proc, struct proc* dst_proc,
+                        uint64 src_VA, uint64 size)
+{
+    if(src_proc == 0 || dst_proc == 0 || size == 0) {
+        return -1;
     }
-    pte_t *pte_src;
-    uint64 a, last, pa, dst_va, current_src_va,current_dst_va;
-    int flags;
-    a = PGROUNDDOWN(src_va);
-    last = PGROUNDDOWN(src_va + size - 1);
-    dst_va = PGROUNDUP(dst_proc->sz);   
+    uint64 start_VA, end_VA, total_size, offset, npages, dst_va, original_dst_sz;
 
-    for(;;){
-      //get pa
-      if((pte_src = walk(src_proc->pagetable, a, 0)) == 0){
-        cleanup();
-        return -1;
-      }
-      if(!(*pte_src & PTE_V) || !(*pte_src & PTE_U)) {
-        cleanup();
-        return -1;
-      }
-      current_src_va = a + (i + * PGSIZE);
-      current_dst_va = dst_va + (i * PGSIZE);
-      pa = PTE2PA(*pte_src);
-      flags = PTE_FLAGS(*pte_src);
-
-      if(mappages(dst_proc->pagetable, current_dst_va, PGSIZE, pa, flags) != 0) {
-        cleanup();
-        return -1;
-      }
-
-
-      *pte_src = PA2PTE(pa) | perm | PTE_V;
-      if(a == last)
-        break;
-      a += PGSIZE;
-      pa += PGSIZE;
-  }
-  return 0;
-
-
+    // Calculate page-aligned boundaries
+    start_VA = PGROUNDDOWN(src_VA);
+    end_VA = PGROUNDUP(src_VA + size);
+    offset = src_VA - start_VA;
+    total_size = end_VA - start_VA;
+    npages = total_size / PGSIZE;
+    
+    // Find where to map in destination process (at end of current address space like in uvmunmap)
+    dst_va = PGROUNDUP(dst_proc->sz);
+    original_dst_sz = dst_proc->sz;  // Save for cleanup on error
+    
+    // Map each page
+    for(uint64 i = 0; i < npages; i++) {
+        uint64 current_src_va = start_VA + (i * PGSIZE);
+        uint64 current_dst_va = dst_va + (i * PGSIZE);
+        
+        // Get page table entry from source process
+        pte_t *src_pte = walk(src_proc->pagetable, current_src_va, 0);
+        if(src_pte == 0) {
+            // Source page not mapped - cleanup and fail
+            cleanup(dst_proc, dst_va, i, original_dst_sz);
+            return -1;
+        }
+        
+        // Verify page is valid and user-accessible
+        if((*src_pte & PTE_V) == 0 || (*src_pte & PTE_U) == 0) {
+            // Invalid or kernel page - cleanup and fail
+            cleanup(dst_proc, dst_va, i, original_dst_sz);
+            return -1;
+        }
+        
+        // Extract physical address and permissions
+        uint64 pa = PTE2PA(*src_pte);
+        int flags = PTE_FLAGS(*src_pte);
+        
+        // Mark as shared
+        flags |= PTE_S;
+        
+        // Map the physical page into destination process
+        if(mappages(dst_proc->pagetable, current_dst_va, PGSIZE, pa, flags) != 0) {
+            // Mapping failed - cleanup and fail
+            cleanup(dst_proc, dst_va, i, original_dst_sz);
+            return -1;
+        }
+        
+        // Update process size after each successful mapping
+        // This ensures cleanup_partial_mapping knows how many pages to unmap
+        dst_proc->sz = current_dst_va + PGSIZE;
+    }
+    
+    // Return virtual address in destination process (with original offset)
+    return dst_va + offset;
 }
