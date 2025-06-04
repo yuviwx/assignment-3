@@ -5,6 +5,7 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -436,4 +437,97 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+
+/*
+  * Map shared pages from src_proc to dst_proc.
+  * This function maps the pages from src_proc's page table
+  * to dst_proc's page table, allowing both processes to share
+  * the same physical memory.
+  * Returns the number of pages mapped, or 0 on failure.
+  * for each page
+    we calculate from wich page to wich page in the src 
+      for each page we fine the fa and map it to the des
+      we copy the flags 
+      Update Process Size and Return
+  */
+
+
+/*
+  * Map shared pages from src_proc to dst_proc.
+  * This function maps the pages from src_proc's page table
+  * to dst_proc's page table, allowing both processes to share
+  * the same physical memory.
+  * Returns the number of pages mapped, or 0 on failure.
+  * for each page
+    we calculate from wich page to wich page in the src 
+      for each page we fine the fa and map it to the des
+      we copy the flags 
+      Update Process Size and Return
+  */
+
+  static void cleanup(struct proc* dst_proc, uint64 dst_va, 
+                                   uint64 pages_mapped, uint64 original_sz)
+{
+    if(pages_mapped > 0) {
+        uvmunmap(dst_proc->pagetable, dst_va, pages_mapped, 0);
+    }    
+    // Restore the original process size
+    dst_proc->sz = original_sz;
+}
+
+uint64 map_shared_pages(struct proc* src_proc, struct proc* dst_proc, 
+                        uint64 src_va, uint64 size) {
+    if (src_proc == 0 || dst_proc == 0 || size == 0 || src_va >= MAXVA) {
+        return -1; // Invalid input
+    }
+
+    pte_t *pte_src;
+    uint64 a, last, pa, dst_va,cur_dst_va, offset, org_sz;
+    int flags;
+    //page bounderies in source
+    a = PGROUNDDOWN(src_va);
+    last = PGROUNDDOWN(src_va + size - 1);
+    //new page in distension
+    dst_va = PGROUNDUP(dst_proc->sz);
+    
+    //runner
+    cur_dst_va = dst_va;
+    offset = src_va - a;
+    
+    //for cleanup
+    org_sz = dst_proc->sz;
+
+    for(;;){
+      //get pa
+      if((pte_src = walk(src_proc->pagetable, a, 0)) == 0){
+        cleanup(dst_proc, dst_va, (cur_dst_va - dst_va) / PGSIZE, org_sz);
+        return -1;
+      }
+
+      if(!(*pte_src & PTE_V) || !(*pte_src & PTE_U)) {
+        cleanup(dst_proc, dst_va, (cur_dst_va - dst_va) / PGSIZE, org_sz);
+        return -1;
+      }
+
+      pa = PTE2PA(*pte_src);
+      flags = PTE_FLAGS(*pte_src) | PTE_S;
+
+      if(mappages(dst_proc->pagetable, cur_dst_va, PGSIZE, pa, flags) != 0) {
+        cleanup(dst_proc, dst_va, (cur_dst_va - dst_va) / PGSIZE, org_sz);
+        return -1;
+      }
+      // Update process size after each successful mapping
+      dst_proc->sz = cur_dst_va + PGSIZE;
+      
+      //update and ends the loop
+      if(a == last)
+        break;
+      a += PGSIZE;
+      cur_dst_va += PGSIZE;
+  }
+  return dst_va + offset;
+
+
 }
