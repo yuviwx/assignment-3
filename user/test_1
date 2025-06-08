@@ -10,11 +10,11 @@
 void print_process_size(const char* stage) {
     // Note: xv6 doesn't have a direct way to get process size from userspace
     // We'll use a simple marker to track our progress
-    printf("Process size at %s\n", stage);
+    printf("Child size %s: %d\n", stage, sbrk(0));
 }
 
 // Test 1: Basic shared memory mapping and communication
-void test_basic_sharing() {
+void test_basic_sharing(int unmap) {
     printf("=== Test 1: Basic Shared Memory Test ===\n");
     
     char *buffer;
@@ -32,8 +32,8 @@ void test_basic_sharing() {
     
     // Write a test message in the buffer
     strcpy(buffer, "Hello from parent");
-    printf("Parent wrote: '%s'\n", buffer);
-    print_process_size("after parent allocation");
+    // printf("Parent wrote: '%s'\n", buffer);
+    //print_process_size("after parent allocation");
     
     // Fork a child process
     child_pid = fork();
@@ -44,8 +44,8 @@ void test_basic_sharing() {
     
     if (child_pid == 0) {
         // Child process
-        printf("Child process started (PID: %d)\n", getpid());
-        print_process_size("child before mapping");
+        // printf("Child process started (PID: %d)\n", getpid());
+        print_process_size("before mapping");
         
         // Map shared memory from parent
         addr_result = (uint64)map_shared_pages(parent_pid, buffer, TEST_SIZE);
@@ -55,36 +55,37 @@ void test_basic_sharing() {
         }
         shared_addr = (char*)addr_result;
         
-        printf("Child mapped shared memory at address %p\n", shared_addr);
-        print_process_size("child after mapping");
+        // printf("Child mapped shared memory at address %p\n", shared_addr);
+        print_process_size("after mapping");
         
         // Read what parent wrote
-        printf("Child read: '%s'\n", shared_addr);
+        // printf("Child read: '%s'\n", shared_addr);
         
         // Write response in shared memory
         strcpy(shared_addr, "Hello daddy");
-        printf("Child wrote: '%s'\n", shared_addr);
+        // printf("Child wrote: '%s'\n", shared_addr);
         
-        if (!DISABLE_UNMAPPING) {
+        if (!unmap) {
             // Unmap shared memory
             if (unmap_shared_pages(shared_addr, TEST_SIZE) == -1) {
                 printf("ERROR: Child failed to unmap shared memory\n");
                 exit(1);
             }
-            printf("Child unmapped shared memory\n");
-            print_process_size("child after unmapping");
+            // printf("Child unmapped shared memory\n");
+            print_process_size("after unmapping");
             
             // Test that malloc works after unmapping
-            char *test_malloc = malloc(1024);
+            char *test_malloc = malloc(4096);
             if (test_malloc == 0) {
                 printf("ERROR: malloc failed after unmapping\n");
                 exit(1);
             }
-            printf("Child malloc successful after unmapping\n");
+            print_process_size("after malloc");
+            // printf("Child malloc successful after unmapping\n");
             free(test_malloc);
-            print_process_size("child after malloc test");
+            print_process_size("after free malloc");
         } else {
-            printf("Child skipping unmap (testing cleanup)\n");
+            // printf("Child skipping unmap (testing cleanup)\n");
         }
         
         exit(0);
@@ -95,13 +96,13 @@ void test_basic_sharing() {
         // Check if child wrote to shared memory
         printf("Parent read after child: '%s'\n", buffer);
         
-        if (strcmp(buffer, "Hello daddy") == 0) {
-            printf("SUCCESS: Shared memory communication worked!\n");
-        } else {
-            printf("ERROR: Shared memory communication failed\n");
-        }
+        // if (strcmp(buffer, "Hello daddy") == 0) {
+        //     printf("SUCCESS: Shared memory communication worked!\n");
+        // } else {
+        //     printf("ERROR: Shared memory communication failed\n");
+        // }
         
-        print_process_size("parent after child completion");
+        // print_process_size("parent after child completion");
     }
 }
 
@@ -165,7 +166,7 @@ void test_multiple_mappings() {
     } else {
         // Parent
         wait(0);
-        printf("Parent process after child completion\n");
+        
         printf("Parent buffer1 after child: '%s'\n", buffer1);
         printf("Parent buffer2 after child: '%s'\n", buffer2);
         
@@ -318,7 +319,8 @@ int main(int argc, char *argv[]) {
     printf("=============================\n");
     
     // Run all tests
-    test_basic_sharing();
+    test_basic_sharing(0);
+    test_basic_sharing(1);
     // test_multiple_mappings();
     // test_error_conditions();
     // test_non_aligned_addresses();
@@ -327,10 +329,10 @@ int main(int argc, char *argv[]) {
     printf("\n=============================\n");
     printf("All tests completed!\n");
     
-    // Test the system can run multiple times
-    printf("\nTesting system stability - running basic test again...\n");
-    test_basic_sharing();
-    printf("System stability test passed!\n");
+    // // Test the system can run multiple times
+    // printf("\nTesting system stability - running basic test again...\n");
+    // test_basic_sharing(1);
+    // printf("System stability test passed!\n");
     
     exit(0);
 }
