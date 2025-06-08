@@ -95,35 +95,38 @@ sys_uptime(void)
 uint64
 sys_map_shared_pages(void)
 {
-    int src_pid;
+    int src_pid, dst_pid;
     uint64 src_va, size;
     struct proc *src_proc, *dst_proc;
     
     // Extract arguments from user space
     argint(0, &src_pid);
-    argaddr(1, &src_va);
-    argaddr(2, &size);
-    
-    // Get current process (destination)
-    dst_proc = myproc();
+    argint(1, &dst_pid);
+    argaddr(2, &src_va);
+    argaddr(3, &size);
     
     // Find source process by PID
-    src_proc = 0;
+    src_proc = 0; 
+    dst_proc = 0;
     for(struct proc *p = proc; p < &proc[NPROC]; p++) {
-        acquire(&p->lock);
-        if(p->state != UNUSED && p->pid == src_pid) {
-            src_proc = p;
-            release(&p->lock);
-            break;
-        }
-        release(&p->lock);
+      acquire(&p->lock);
+      if(p->state != UNUSED) {
+          if(p->pid == src_pid)
+              src_proc = p;
+          if(p->pid == dst_pid)
+              dst_proc = p;
+      }
+      release(&p->lock);
+
+      if(src_proc && dst_proc)
+          break;
     }
+
     
-    if(src_proc == 0) {
+    if(src_proc == 0 || dst_proc == 0) {
         return -1; // Source process not found
     }
     
-    // Call kernel function
     return map_shared_pages(src_proc, dst_proc, src_va, size);
 }
 
@@ -131,12 +134,26 @@ sys_map_shared_pages(void)
 uint64
 sys_unmap_shared_pages(void)
 {
-    uint64 addr, size;
-    
-    // Extract arguments from user space
-    argaddr(0, &addr);
-    argaddr(1, &size);
-    
-    // Call kernel function on current process
-    return unmap_shared_pages(myproc(), addr, size);
+  struct proc *dst_proc;
+  uint64 addr, size;
+  int pid;
+  
+  // Extract arguments from user space
+  argint(0, &pid);
+  argaddr(1, &addr);
+  argaddr(2, &size);
+
+  dst_proc = 0;
+  for(struct proc *p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state != UNUSED && p->pid == pid) {
+        dst_proc = p;
+        release(&p->lock);
+        break;
+      }
+      release(&p->lock);
+  }
+  
+  // Call kernel function on current process
+  return unmap_shared_pages(dst_proc, addr, size);
 }

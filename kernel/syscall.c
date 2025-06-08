@@ -8,10 +8,6 @@
 #include "defs.h"
 
 
-extern uint64 sys_map_shared_pages(void);
-extern uint64 sys_unmap_shared_pages(void);
-
-
 // Fetch the uint64 at addr from the current process.
 int
 fetchaddr(uint64 addr, uint64 *ip)
@@ -106,6 +102,8 @@ extern uint64 sys_unlink(void);
 extern uint64 sys_link(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_close(void);
+extern uint64 sys_map_shared_pages(void);
+extern uint64 sys_unmap_shared_pages(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.

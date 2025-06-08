@@ -21,13 +21,13 @@ void shmem_test(int disable_unmapping)
     } else if (pid == 0) {
         // Child process
         printf("Child size: %d\n", sbrk(0));
-        char* shared_memory = map_shared_pages(daddy, buffer, PGSIZE);
+        char* shared_memory = map_shared_pages(daddy, getpid(), buffer, PGSIZE);
         printf("Child size after shared memory: %d\n", sbrk(0));
 
         // Use the shared memory
         strcpy(shared_memory, "Hello daddy");
         if(!disable_unmapping) {
-            unmap_shared_pages(shared_memory, PGSIZE);
+            unmap_shared_pages(getpid(), shared_memory, PGSIZE);
             printf("Child size after unmap: %d\n", sbrk(0));
         }
         char* new_buffer = malloc(PGSIZE);
