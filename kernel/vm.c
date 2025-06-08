@@ -521,14 +521,14 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
     acquire(&src_proc->lock);
     if ((pte_src = walk(src_proc->pagetable, a, 0)) == 0)
     {
-      cleanup(dst_proc, dst_va, (cur_dst_va - dst_va) / PGSIZE, org_sz);
+      cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
       return -1;
     }
     release(&src_proc->lock);
 
     if (!(*pte_src & PTE_V) || !(*pte_src & PTE_U))
     {
-      cleanup(dst_proc, dst_va, (cur_dst_va - dst_va) / PGSIZE, org_sz);
+      cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
       return -1;
     }
 
@@ -538,7 +538,7 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
     acquire(&dst_proc->lock);
     if (mappages(dst_proc->pagetable, cur_dst_va, PGSIZE, pa, flags) != 0)
     {
-      cleanup(dst_proc, dst_va, (cur_dst_va - dst_va) / PGSIZE, org_sz);
+      cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
       return -1;
     }
     release(&dst_proc->lock);
