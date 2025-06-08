@@ -74,7 +74,7 @@ void custom_exit(char *buf) {
 }
 
 int test1(){
-  char* buffer = malloc(PGSIZE/8);
+  char* buffer = malloc(PGSIZE);
   memset(buffer, 0, PGSIZE);
   int dad_pid = getpid();
   int index, my_pid;
