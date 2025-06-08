@@ -101,6 +101,14 @@ int test1(){
   
 }
 
+void test2(){
+  char* buffer = malloc(PGSIZE);
+  memset(buffer, 0, PGSIZE);
+  write_log(buffer, 1, "hello world");
+  read_log(buffer);
+}
+
 int main(int argc, char *argv[]){
-    return test1();
+    test2();
+    return 0;
 }
