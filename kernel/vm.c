@@ -517,50 +517,42 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
 
   for (;;)
   {
-    // lock
-    acquire(&dst_proc->lock);
-    acquire(&src_proc->lock);
-
     // get pa
+    acquire(&src_proc->lock);
     if ((pte_src = walk(src_proc->pagetable, a, 0)) == 0)
     {
       cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
-      release(&src_proc->lock);
-      release(&dst_proc->lock);
       return -1;
     }
+    release(&src_proc->lock);
 
     if (!(*pte_src & PTE_V) || !(*pte_src & PTE_U))
     {
       cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
-      release(&src_proc->lock);
-      release(&dst_proc->lock);
       return -1;
     }
 
     pa = PTE2PA(*pte_src);
     flags = PTE_FLAGS(*pte_src) | PTE_S;
 
+    acquire(&dst_proc->lock);
     if (mappages(dst_proc->pagetable, cur_dst_va, PGSIZE, pa, flags) != 0)
     {
       cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
-      release(&src_proc->lock);
-      release(&dst_proc->lock);
       return -1;
     }
+    release(&dst_proc->lock);
 
     // Update process size after each successful mapping
+    acquire(&dst_proc->lock);
     dst_proc->sz = cur_dst_va + PGSIZE;
+    release(&dst_proc->lock);
 
     // update and ends the loop
     if (a == last)
       break;
     a += PGSIZE;
     cur_dst_va += PGSIZE;
-
-    // unlock
-    release(&src_proc->lock);
-    release(&dst_proc->lock);
   }
   return dst_va + offset;
 }
@@ -586,7 +578,9 @@ uint64 unmap_shared_pages(struct proc *p, uint64 addr, uint64 size)
       return -1;
     }
   }
+  release(&p->lock);
 
+  acquire(&p->lock);
   // Unmap
   uvmunmap(p->pagetable, a, npages, 0);
 
