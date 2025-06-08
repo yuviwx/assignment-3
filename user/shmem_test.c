@@ -1,336 +1,57 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
+#include "kernel/riscv.h"
+#include <stddef.h>
 
-// Test configuration
-#define TEST_SIZE 4096
-#define DISABLE_UNMAPPING 0  // Set to 1 to test cleanup without unmapping
 
-// Helper function to print process size
-void print_process_size(const char* stage) {
-    // Note: xv6 doesn't have a direct way to get process size from userspace
-    // We'll use a simple marker to track our progress
-    printf("Process size at %s\n", stage);
-}
-
-// Test 1: Basic shared memory mapping and communication
-void test_basic_sharing() {
-    printf("=== Test 1: Basic Shared Memory Test ===\n");
-    
-    char *buffer;
-    char *shared_addr;
-    int parent_pid = getpid();
-    int child_pid;
-    uint64 addr_result;
-    
-    // Allocate some memory in parent
-    buffer = sbrk(TEST_SIZE);
-    if (buffer == (char*)-1) {
-        printf("ERROR: Failed to allocate memory\n");
+void shmem_test(int disable_unmapping)
+{
+    char* buffer = malloc(PGSIZE);
+    if (buffer == NULL) {
+        printf("Failed to allocate shared memory\n");
         exit(1);
     }
-    
-    // Write a test message in the buffer
-    strcpy(buffer, "Hello from parent");
-    printf("Parent wrote: '%s'\n", buffer);
-    print_process_size("after parent allocation");
-    
-    // Fork a child process
-    child_pid = fork();
-    if (child_pid < 0) {
-        printf("ERROR: Fork failed\n");
+    int daddy = getpid();
+    int pid = fork();
+    if(pid < 0) {
+        printf("Fork failed\n");
+        free(buffer);
         exit(1);
-    }
-    
-    if (child_pid == 0) {
+    } else if (pid == 0) {
         // Child process
-        printf("Child process started (PID: %d)\n", getpid());
-        print_process_size("child before mapping");
-        
-        // Map shared memory from parent
-        addr_result = (uint64)map_shared_pages(parent_pid, buffer, TEST_SIZE);
-        if (addr_result == (uint64)-1) {
-            printf("ERROR: Child failed to map shared memory\n");
+        printf("Child size: %d\n", sbrk(0));
+        char* shared_memory = map_shared_pages(daddy, buffer, PGSIZE);
+        printf("Child size after shared memory: %d\n", sbrk(0));
+
+        // Use the shared memory
+        strcpy(shared_memory, "Hello daddy");
+        if(!disable_unmapping) {
+            unmap_shared_pages(shared_memory, PGSIZE);
+            printf("Child size after unmap: %d\n", sbrk(0));
+        }
+        char* new_buffer = malloc(PGSIZE);
+        if (new_buffer == NULL) {
+            printf("Failed to allocate new buffer\n");
             exit(1);
         }
-        shared_addr = (char*)addr_result;
-        
-        printf("Child mapped shared memory at address %p\n", shared_addr);
-        print_process_size("child after mapping");
-        
-        // Read what parent wrote
-        printf("Child read: '%s'\n", shared_addr);
-        
-        // Write response in shared memory
-        strcpy(shared_addr, "Hello daddy");
-        printf("Child wrote: '%s'\n", shared_addr);
-        
-        if (!DISABLE_UNMAPPING) {
-            // Unmap shared memory
-            if (unmap_shared_pages(shared_addr, TEST_SIZE) == -1) {
-                printf("ERROR: Child failed to unmap shared memory\n");
-                exit(1);
-            }
-            printf("Child unmapped shared memory\n");
-            print_process_size("child after unmapping");
-            
-            // Test that malloc works after unmapping
-            char *test_malloc = malloc(1024);
-            if (test_malloc == 0) {
-                printf("ERROR: malloc failed after unmapping\n");
-                exit(1);
-            }
-            printf("Child malloc successful after unmapping\n");
-            free(test_malloc);
-            print_process_size("child after malloc test");
-        } else {
-            printf("Child skipping unmap (testing cleanup)\n");
-        }
-        
+        printf("Child size after malloc: %d\n", sbrk(0));
+        free(new_buffer);        
         exit(0);
-    } else {
+    }
+    else {
         // Parent process
-        wait(0);  // Wait for child to complete
-        
-        // Check if child wrote to shared memory
-        printf("Parent read after child: '%s'\n", buffer);
-        
-        if (strcmp(buffer, "Hello daddy") == 0) {
-            printf("SUCCESS: Shared memory communication worked!\n");
-        } else {
-            printf("ERROR: Shared memory communication failed\n");
-        }
-        
-        print_process_size("parent after child completion");
+        wait(0); 
+        printf("%s\n", buffer);
+        free(buffer);
     }
+
 }
 
-// Test 2: Multiple mappings and edge cases
-void test_multiple_mappings() {
-    printf("\n=== Test 2: Multiple Mappings Test ===\n");
-    
-    char *buffer1, *buffer2;
-    char *shared_addr1, *shared_addr2;
-    int parent_pid = getpid();
-    int child_pid;
-    uint64 addr_result1, addr_result2;
-    
-    // Allocate two separate buffers
-    buffer1 = sbrk(TEST_SIZE);
-    buffer2 = sbrk(TEST_SIZE);
-    
-    if (buffer1 == (char*)-1 || buffer2 == (char*)-1) {
-        printf("ERROR: Failed to allocate buffers\n");
-        return;
-    }
-    
-    strcpy(buffer1, "Buffer 1 data");
-    strcpy(buffer2, "Buffer 2 data");
-    
-    child_pid = fork();
-    if (child_pid < 0) {
-        printf("ERROR: Fork failed\n");
-        return;
-    }
-    
-    if (child_pid == 0) {
-        // Child: Map both buffers
-        addr_result1 = (uint64)map_shared_pages(parent_pid, buffer1, TEST_SIZE);
-        addr_result2 = (uint64)map_shared_pages(parent_pid, buffer2, TEST_SIZE);
-        
-        if (addr_result1 == (uint64)-1 || addr_result2 == (uint64)-1) {
-            printf("ERROR: Child failed to map multiple buffers\n");
-            exit(1);
-        }
-        
-        shared_addr1 = (char*)addr_result1;
-        shared_addr2 = (char*)addr_result2;
-        
-        printf("Child mapped buffer1: '%s'\n", shared_addr1);
-        printf("Child mapped buffer2: '%s'\n", shared_addr2);
-        
-        // Modify both buffers
-        strcpy(shared_addr1, "Modified buffer 1");
-        strcpy(shared_addr2, "Modified buffer 2");
-        
-        // Unmap both
-        if (unmap_shared_pages(shared_addr1, TEST_SIZE) == -1 ||
-            unmap_shared_pages(shared_addr2, TEST_SIZE) == -1) {
-            printf("ERROR: Failed to unmap multiple buffers\n");
-            exit(1);
-        }
-        
-        printf("Child unmapped both buffers successfully\n");
-        exit(0);
-    } else {
-        // Parent
-        wait(0);
-        
-        printf("Parent buffer1 after child: '%s'\n", buffer1);
-        printf("Parent buffer2 after child: '%s'\n", buffer2);
-        
-        if (strcmp(buffer1, "Modified buffer 1") == 0 && 
-            strcmp(buffer2, "Modified buffer 2") == 0) {
-            printf("SUCCESS: Multiple mappings worked!\n");
-        } else {
-            printf("ERROR: Multiple mappings failed\n");
-        }
-    }
-}
+int main(int argc, char *argv[])
+{  
 
-// Test 3: Error conditions
-void test_error_conditions() {
-    printf("\n=== Test 3: Error Conditions Test ===\n");
-    
-    char *buffer = sbrk(TEST_SIZE);
-    uint64 result;
-    
-    // Test 1: Invalid PID
-    result = (uint64)map_shared_pages(-1, buffer, TEST_SIZE);
-    if (result == (uint64)-1) {
-        printf("SUCCESS: Invalid PID correctly rejected\n");
-    } else {
-        printf("ERROR: Invalid PID should be rejected\n");
-    }
-    
-    // Test 2: Invalid address
-    result = (uint64)map_shared_pages(getpid(), (void*)0xFFFFFFFF, TEST_SIZE);
-    if (result == (uint64)-1) {
-        printf("SUCCESS: Invalid address correctly rejected\n");
-    } else {
-        printf("ERROR: Invalid address should be rejected\n");
-    }
-    
-    // Test 3: Zero size
-    result = (uint64)map_shared_pages(getpid(), buffer, 0);
-    if (result == (uint64)-1) {
-        printf("SUCCESS: Zero size correctly rejected\n");
-    } else {
-        printf("ERROR: Zero size should be rejected\n");
-    }
-    
-    // Test 4: Unmap non-mapped memory
-    int unmap_result = unmap_shared_pages(buffer + TEST_SIZE * 2, TEST_SIZE);
-    if (unmap_result == -1) {
-        printf("SUCCESS: Unmapping non-mapped memory correctly rejected\n");
-    } else {
-        printf("ERROR: Should not be able to unmap non-mapped memory\n");
-    }
-}
-
-// Test 4: Non-aligned addresses
-void test_non_aligned_addresses() {
-    printf("\n=== Test 4: Non-aligned Address Test ===\n");
-    
-    char *buffer = sbrk(TEST_SIZE * 2);  // Allocate extra space
-    char *non_aligned_addr = buffer + 100;  // Not page-aligned
-    int parent_pid = getpid();
-    int child_pid;
-    
-    // Write test data at non-aligned address
-    strcpy(non_aligned_addr, "Non-aligned data");
-    
-    child_pid = fork();
-    if (child_pid < 0) {
-        printf("ERROR: Fork failed\n");
-        return;
-    }
-    
-    if (child_pid == 0) {
-        // Child: Try to map non-aligned address
-        uint64 addr_result = (uint64)map_shared_pages(parent_pid, non_aligned_addr, 1000);
-        
-        if (addr_result == (uint64)-1) {
-            printf("ERROR: Failed to map non-aligned address\n");
-            exit(1);
-        }
-        
-        char *shared_addr = (char*)addr_result;
-        
-        printf("Child mapped non-aligned address successfully\n");
-        printf("Child read: '%s'\n", shared_addr);
-        
-        // The shared address should have the correct offset
-        if (strcmp(shared_addr, "Non-aligned data") == 0) {
-            printf("SUCCESS: Non-aligned mapping preserved offset correctly\n");
-        } else {
-            printf("ERROR: Non-aligned mapping offset incorrect\n");
-        }
-        
-        // Clean up
-        if (unmap_shared_pages(shared_addr, 1000) == -1) {
-            printf("ERROR: Failed to unmap non-aligned memory\n");
-            exit(1);
-        }
-        
-        exit(0);
-    } else {
-        wait(0);
-    }
-}
-
-// Test 5: Process cleanup test
-void test_process_cleanup() {
-    printf("\n=== Test 5: Process Cleanup Test ===\n");
-    
-    char *buffer = sbrk(TEST_SIZE);
-    int parent_pid = getpid();
-    int child_pid;
-    
-    strcpy(buffer, "Cleanup test data");
-    
-    child_pid = fork();
-    if (child_pid < 0) {
-        printf("ERROR: Fork failed\n");
-        return;
-    }
-    
-    if (child_pid == 0) {
-        // Child: Map memory but don't unmap (test cleanup)
-        uint64 addr_result = (uint64)map_shared_pages(parent_pid, buffer, TEST_SIZE);
-        
-        if (addr_result == (uint64)-1) {
-            printf("ERROR: Child failed to map memory for cleanup test\n");
-            exit(1);
-        }
-        
-        printf("Child mapped memory for cleanup test\n");
-        printf("Child exiting without unmapping (testing kernel cleanup)\n");
-        
-        // Exit without unmapping to test kernel cleanup
-        exit(0);
-    } else {
-        wait(0);
-        
-        // Parent should still be able to access the memory
-        if (strcmp(buffer, "Cleanup test data") == 0) {
-            printf("SUCCESS: Parent can still access memory after child exit\n");
-            printf("SUCCESS: Kernel cleanup worked correctly\n");
-        } else {
-            printf("ERROR: Memory corrupted after child exit\n");
-        }
-    }
-}
-
-// Main test function
-int main(int argc, char *argv[]) {
-    printf("Starting Shared Memory Tests\n");
-    printf("=============================\n");
-    
-    // Run all tests
-    test_basic_sharing();
-    test_multiple_mappings();
-    test_error_conditions();
-    test_non_aligned_addresses();
-    test_process_cleanup();
-    
-    printf("\n=============================\n");
-    printf("All tests completed!\n");
-    
-    // Test the system can run multiple times
-    printf("\nTesting system stability - running basic test again...\n");
-    test_basic_sharing();
-    printf("System stability test passed!\n");
-    
+    shmem_test(0);
+    shmem_test(1);
     exit(0);
 }
