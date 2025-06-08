@@ -173,6 +173,8 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+uint64          map_shared_pages(struct proc*, struct proc*, uint64, uint64);
+uint64          unmap_shared_pages(struct proc*, uint64, uint64);
 
 // plic.c
 void            plicinit(void);
