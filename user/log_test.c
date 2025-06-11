@@ -3,7 +3,7 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
-#define NCHILDREN 16
+#define NCHILDREN 4
 // #define MAX_READ_CYCLES 200000  // Stop reading after this many cycles with no new messages
 // #define IDLE_THRESHOLD 500000    // Consider "no activity" after this many empty cycles
 
@@ -246,8 +246,8 @@ void test2() {
 
 int main(int argc, char *argv[]) {
   printf("main\n");
-  // test1();
-  test2();
+  test1();
+//   test2();
 
     
   return 0;
