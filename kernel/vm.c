@@ -562,33 +562,6 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
   return dst_va + offset;
 }
 
-void c_uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
-{
-  printf("uvmap: va: %p, npages: %p\n", va, npages);
-  uint64 a;
-  pte_t *pte;
-
-  if ((va % PGSIZE) != 0)
-    panic("uvmunmap: not aligned");
-
-  for (a = va; a < va + npages * PGSIZE; a += PGSIZE)
-  {
-    if ((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
-    printf("unmap pte: %p\n", pte);
-    if ((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
-    if (PTE_FLAGS(*pte) == PTE_V)
-      panic("uvmunmap: not a leaf");
-    if (do_free && !(*pte & PTE_S))
-    {
-      uint64 pa = PTE2PA(*pte);
-      kfree((void *)pa);
-    }
-    *pte = 0;
-  }
-}
-
 // Unmap the shared memory from the destination process
 uint64 unmap_shared_pages(struct proc *p, uint64 addr, uint64 size)
 {
@@ -606,13 +579,14 @@ uint64 unmap_shared_pages(struct proc *p, uint64 addr, uint64 size)
   // Check if the mapping is exist & shared
   acquire(&p->lock);
   for(uint64 curr = a; curr <= last; curr += PGSIZE){
-    if((pte = walk(p->pagetable, curr, 0)) == 0 || !(*pte & PTE_S)){
-      return -1;
+      if(((pte = walk(p->pagetable, curr, 0)) == 0) || !(*pte & PTE_S) || !(*pte & PTE_V)){
+        release(&p->lock);
+        return -1;
     }
   }
 
   // Unmap
-  c_uvmunmap(p->pagetable, a, npages, 0);
+  uvmunmap(p->pagetable, a, npages, 0);
 
   // reSize
   if(a + npages*PGSIZE == p->sz)
