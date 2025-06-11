@@ -1,114 +1,203 @@
 #include "kernel/types.h"
 #include "kernel/riscv.h"
 #include "kernel/stat.h"
-#include "user.h"
+#include "user/user.h"
 
 #define NCHILDREN 4
+#define MAX_READ_CYCLES 200  // Stop reading after this many cycles with no new messages
+#define IDLE_THRESHOLD 50    // Consider "no activity" after this many empty cycles
+
 typedef unsigned int uint32;
+typedef unsigned short uint16;
 
-// search for a free segment and write to it
-int write_log(char *buf, int index, const char *msg) {
-  int len = strlen(msg);
-  char *p = buf;
+// Write a message to the shared buffer using atomic operations
+int write_log(char *buf, int child_index, const char *msg) {
+    int len = strlen(msg);
+    char *p = buf;
 
-  //if (len >= (1 << 16)) return -1;
+    // Validate message length fits in 16 bits
+    if (len >= (1 << 16)) return -1;
 
-  while (p + 4 + len < buf + PGSIZE) {
-    uint32 *header = (uint32 *)p;
-    uint32 expected = 0;
-    uint32 new_header = (index << 16) | (uint16)len;  // casting to prevent too big len(overflow to index's bits)
+    // Search for free space in buffer
+    while (p + 4 + len < buf + PGSIZE) {
+        uint32 *header = (uint32 *)p;
+        uint32 expected = 0;  // Looking for empty slot
+        uint32 new_header = (child_index << 16) | (uint16)len;
 
-    if (__sync_val_compare_and_swap(header, expected, new_header) == expected) {
-      memmove(p + 4, msg, len);
-      *((uint32 *)p) = new_header | 0x80000000; // Mark the msb with 1 - finish writing
-      return 0;
+        // Atomically claim this slot
+        if (__sync_val_compare_and_swap(header, expected, new_header) == expected) {
+            // Successfully claimed - write message
+            memmove(p + 4, msg, len);
+            
+            // Mark as complete with MSB=1 (atomic completion flag)
+            *((uint32 *)p) = new_header | 0x80000000;
+            return 0;  // Success
+        }
+
+        // Slot taken - move to next potential location
+        uint32 current_header = *((uint32 *)p);
+        uint16 current_len = current_header & 0xFFFF;
+        p += 4 + current_len;
+        
+        // Align to 4-byte boundary
+        p = (char *)(((uint64)p + 3) & ~3);
     }
-    uint32 jump = *((uint32 *)p) & 0xFFFF;
-    p += 4 + jump;
-    p = (char *)(((uint64)p + 3) & ~3); // align
-  }
-  return -1;
+    
+    return -1;  // Buffer full
 }
 
-void read_log(char *buf) {
-  char *p = buf;
-  uint32 header;
-  uint16 child_id, len;
+// Read and print messages from shared buffer
+int read_log(char *buf) {
+    char *p = buf;
+    int messages_found = 0;
+    int debug_scan_count = 0;
 
-  while (1) {
-    if (p + 4 >= buf + PGSIZE)
-      break;
+    while (p + 4 < buf + PGSIZE) {
+        uint32 header = *(uint32 *)p;
+        debug_scan_count++;
+        
+        // Skip empty slots
+        if (header == 0) {
+            p += 4;
+            p = (char *)(((uint64)p + 3) & ~3);
+            continue;
+        }
 
-    header = *(uint32 *)p;
-    child_id = header >> 16;
-    len = header & 0xFFFF;
+        uint16 child_id = (header >> 16) & 0x7FFF;  // Mask out MSB flag
+        uint16 len = header & 0xFFFF;
+        
+        // Check if message is complete (MSB=1) and not already read
+        if ((header & 0x80000000) && child_id != 0x7FFF && child_id < NCHILDREN) {
+            // Validate buffer bounds
+            if (p + 4 + len >= buf + PGSIZE) break;
+            
+            // Read and print message
+            char msg[len + 1];
+            memmove(msg, p + 4, len);
+            msg[len] = '\0';
+            printf("Parent received from child %d: %s\n", child_id, msg);
+            
+            // Mark as read (set child_id to 0x7FFF)
+            uint32 new_header = (0x7FFF << 16) | len | 0x80000000;
+            *((uint32 *)p) = new_header;
+            messages_found++;
+        }
 
-    if (header != 0 && (header >> 16) != 0xFFFF && (header & 0x80000000) == 0) {
-
-      if (p + 4 + len >= buf + PGSIZE)
-        break;
-      
-      char msg[len+1];
-      memmove(msg, p + 4, len);
-      msg[len] = '\0';
-      printf("Parent received from child %d: %s\n", child_id, msg);
-
-      *((uint32 *)p) = (0xFFFF << 16) | len;
+        // Move to next message location
+        p += 4 + len;
+        p = (char *)(((uint64)p + 3) & ~3);
+        
+        // Safety check - don't scan forever
+        if (debug_scan_count > 100) break;
     }
-    p += 4 + len;
-    p = (char *)(((uint64)p + 3) & ~3); // align to 4 bytes
-  }
-}
-/*
-void custom_exit(char* buf){
-  uint32 *p = (uint32 *)buf;
-  uint32 expected, new_val;
-  do{
-    expected = *p;
-    new_val = expected-1;
-  }while(__sync_val_compare_and_swap(p, expected, new_val) != expected);
-}
-*/
-void custom_exit(char *buf) {
-  __sync_fetch_and_sub((uint32 *)buf, 1);
+    
+    return messages_found;
 }
 
-int test1(){
-  char* buffer = malloc(PGSIZE);
-  memset(buffer, 0, PGSIZE);
-  int dad_pid = getpid();
-  int index, my_pid;
-
-  // Use the first header to flag the number of alive children - len == 0
-  *((uint32 *)buffer) = NCHILDREN << 16;
-
-  for(index = 0; index < NCHILDREN; index++){
-      my_pid = fork();
-      if(my_pid < 0) return -1;
-      if(my_pid == 0) break;
-  }
-  // child - share buffer
-  if(my_pid == 0){
-      char* sh_buffer = map_shared_pages(dad_pid, my_pid, buffer, PGSIZE);
-      write_log(sh_buffer, index,"hello my name is migel" );
-  }
-  else {
-    while (*(uint32*)buffer != 0) {
-      read_log(buffer);
+int main(int argc, char *argv[]) {
+    char *buffer = malloc(PGSIZE);
+    if (buffer == 0) {
+        printf("ERROR: Failed to allocate buffer\n");
+        exit(1);
     }
-  }
-  return 0;
-  
-}
+    
+    // Initialize buffer to zero
+    memset(buffer, 0, PGSIZE);
+    
+    int dad_pid = getpid();
+    int child_index, my_pid;
 
-void test2(){
-  char* buffer = malloc(PGSIZE);
-  memset(buffer, 0, PGSIZE);
-  write_log(buffer, 1, "hello world");
-  read_log(buffer);
-}
+    // Fork children
+    for (child_index = 0; child_index < NCHILDREN; child_index++) {
+        my_pid = fork();
+        if (my_pid < 0) {
+            printf("ERROR: Fork failed\n");
+            exit(1);
+        }
+        if (my_pid == 0) break;  // Child breaks out of loop
+    }
 
-int main(int argc, char *argv[]){
-    test2();
-    return 0;
+    if (my_pid == 0) {
+        // Child process
+        char *sh_buffer = map_shared_pages(dad_pid, getpid(), buffer, PGSIZE);
+        if (sh_buffer == (char *)-1) {
+            printf("ERROR: Child %d failed to map shared memory\n", child_index);
+            exit(1);
+        }
+
+        // Add small delays for different children to create concurrency
+        if (child_index > 0) {
+            sleep(child_index);  // Stagger child start times
+        }
+
+        // Child 0 writes many messages to test buffer overflow
+        int message_count = (child_index == 0) ? 30 : 25;
+        
+        for (int i = 0; i < message_count; i++) {
+            char msg[64];
+            // Build message string manually using only xv6 functions
+            strcpy(msg, "Message from child ");
+            int len = strlen(msg);
+            
+            // Add child index digit
+            msg[len] = '0' + child_index;
+            msg[len + 1] = ' ';
+            msg[len + 2] = 'm';
+            msg[len + 3] = 's';
+            msg[len + 4] = 'g';
+            msg[len + 5] = ' ';
+            
+            // Add message number (handle up to 99)
+            if (i >= 10) {
+                msg[len + 6] = '0' + (i / 10);    // tens digit
+                msg[len + 7] = '0' + (i % 10);    // ones digit
+                msg[len + 8] = '\0';
+            } else {
+                msg[len + 6] = '0' + i;           // single digit
+                msg[len + 7] = '\0';
+            }
+            
+            int result = write_log(sh_buffer, child_index, msg);
+            if (result == -1) {
+                // Buffer full - child stops gracefully
+                break;
+            }
+            
+            // Small delay between messages to allow interleaving
+            if (i % 3 == 0) sleep(1);
+        }
+
+        exit(0);
+        
+    } else {
+        // Parent process - continuous reading
+        // Give children time to start and begin writing
+        sleep(5);
+        
+        int consecutive_empty_reads = 0;
+        int total_messages_read = 0;
+        
+        while (consecutive_empty_reads < IDLE_THRESHOLD) {
+            int messages_read = read_log(buffer);
+            total_messages_read += messages_read;
+            
+            if (messages_read > 0) {
+                consecutive_empty_reads = 0;  // Reset counter
+            } else {
+                consecutive_empty_reads++;
+            }
+            
+            sleep(1);  // Small delay between read attempts
+        }
+
+        printf("Parent finished reading %d total messages\n", total_messages_read);
+        
+        // Wait for all children to complete
+        for (int i = 0; i < NCHILDREN; i++) {
+            wait(0);
+        }
+    }
+
+    free(buffer);
+    exit(0);
 }
