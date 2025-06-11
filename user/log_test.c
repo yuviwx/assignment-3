@@ -3,7 +3,7 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
-#define NCHILDREN 4
+#define NCHILDREN 16
 // #define MAX_READ_CYCLES 200000  // Stop reading after this many cycles with no new messages
 // #define IDLE_THRESHOLD 500000    // Consider "no activity" after this many empty cycles
 
@@ -111,9 +111,8 @@ void custom_exit(char* buf){
     new_header = (num_of_children - 1) << 16;
   } while (__sync_val_compare_and_swap(header, expected, new_header) != expected);
 }
-
-int main(int argc, char *argv[]) {
-    char *buffer = malloc(PGSIZE);
+void test1() {
+  char *buffer = malloc(PGSIZE);
     if (buffer == 0) {
         printf("ERROR: Failed to allocate buffer\n");
         exit(1);
@@ -144,7 +143,7 @@ int main(int argc, char *argv[]) {
            // sleep(child_index);  // Stagger child start times
         }
 
-        int message_count = (child_index == 0) ? 55 : 30;
+        int message_count = (child_index == 0) ? 20 : 5;
         
         for (int i = 0; i < message_count; i++) {
             char msg[28];
@@ -193,4 +192,63 @@ int main(int argc, char *argv[]) {
 
     free(buffer);
     exit(0);
+}
+
+void test2() {
+  printf("============= test 2 =================================\n");
+  char *buffer = malloc(PGSIZE);
+    if (buffer == 0) {
+        printf("ERROR: Failed to allocate buffer\n");
+        exit(1);
+    }
+    memset(buffer, 0, PGSIZE);
+    *((uint32 *)buffer) = 1 << 16; 
+    int dad_pid = getpid();
+    int my_pid;
+    printf("ready\n");
+    my_pid = fork();
+    if (my_pid < 0) {
+        printf("ERROR: Fork failed\n");
+        exit(1);
+    } 
+    
+
+    if (my_pid == 0) {
+        char *sh_buffer = map_shared_pages(dad_pid, getpid(), buffer, PGSIZE);
+        if (sh_buffer == (char *)-1) {
+            printf("ERROR: Child failed to map shared memory\n");
+            exit(1);
+        }
+        char msg[1001];
+        memset(msg,1,1001);
+        write_log(sh_buffer,1,msg);
+        custom_exit(sh_buffer);
+        unmap_shared_pages(getpid(), sh_buffer, PGSIZE);
+
+        exit(0);
+        
+    } else {
+        // Parent process - continuous reading
+      uint32  num_of_children;
+      do {
+        num_of_children = *(uint32 *)buffer >> 16;
+        read_log(buffer);
+
+     } while (num_of_children);
+
+        printf("Parent finished reading total messages\n");
+        
+    }
+
+    free(buffer);
+    exit(0);
+}
+
+int main(int argc, char *argv[]) {
+  printf("main\n");
+  // test1();
+  test2();
+
+    
+  return 0;
 }
