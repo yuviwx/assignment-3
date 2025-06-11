@@ -4,8 +4,8 @@
 #include "user/user.h"
 
 #define NCHILDREN 4
-#define MAX_READ_CYCLES 200  // Stop reading after this many cycles with no new messages
-#define IDLE_THRESHOLD 50    // Consider "no activity" after this many empty cycles
+// #define MAX_READ_CYCLES 200000  // Stop reading after this many cycles with no new messages
+// #define IDLE_THRESHOLD 500000    // Consider "no activity" after this many empty cycles
 
 typedef unsigned int uint32;
 typedef unsigned short uint16;
@@ -55,14 +55,14 @@ int write_log(char *buf, int child_index, const char *msg) {
     return -1;
 }
 
-int read_log(char *buf) {
+void read_log(char *buf) {
     char *p = buf;
-    int messages_found = 0;
-    int debug_scan_count = 0;
+    // int messages_found = 0;
+    // int debug_scan_count = 0;
 
     while (p + 4 < buf + PGSIZE) {
         uint32 header = *(uint32 *)p;
-        debug_scan_count++;
+        // debug_scan_count++;
         
         // Skip empty slots
         if (header == 0) {
@@ -87,17 +87,29 @@ int read_log(char *buf) {
             // Mark as read (set child_id to 0x7FFF)
             uint32 new_header = (0x7FFF << 16) | len | 0x80000000;
             *((uint32 *)p) = new_header;
-            messages_found++;
+            // messages_found++;
         }
 
         // Move to next message location
         p += 4 + len;
         p = (char *)(((uint64)p + 3) & ~3);
         
-        if (debug_scan_count > 100) break;
+        // if (debug_scan_count > 100) break;
     }
     
-    return messages_found;
+    // return messages_found;
+}
+
+void custom_exit(char* buf){
+  uint32 *header;
+  uint32 expected, num_of_children, new_header;
+
+  do {
+    header = (uint32 *)buf;
+    expected = *header;
+    num_of_children = expected >> 16;
+    new_header = (num_of_children - 1) << 16;
+  } while (__sync_val_compare_and_swap(header, expected, new_header) != expected);
 }
 
 int main(int argc, char *argv[]) {
@@ -106,9 +118,8 @@ int main(int argc, char *argv[]) {
         printf("ERROR: Failed to allocate buffer\n");
         exit(1);
     }
-    
     memset(buffer, 0, PGSIZE);
-    
+    *((uint32 *)buffer) = NCHILDREN << 16; 
     int dad_pid = getpid();
     int child_index, my_pid;
 
@@ -133,7 +144,7 @@ int main(int argc, char *argv[]) {
            // sleep(child_index);  // Stagger child start times
         }
 
-        int message_count = (child_index == 0) ? 30 : 25;
+        int message_count = (child_index == 0) ? 55 : 30;
         
         for (int i = 0; i < message_count; i++) {
             char msg[28];
@@ -144,39 +155,40 @@ int main(int argc, char *argv[]) {
             }
             
             // Small delay between messages to allow interleaving
-            if (i % 3 == 0) sleep(1);
+            // if (i % 3 == 0) sleep(1);
         }
+        custom_exit(sh_buffer);
         unmap_shared_pages(getpid(), sh_buffer, PGSIZE);
 
         exit(0);
         
     } else {
         // Parent process - continuous reading
-        // Give children time to start and begin writing
-        //sleep(5);
-        
-        int consecutive_empty_reads = 0;
-        int total_messages_read = 0;
-        
-        while (consecutive_empty_reads < IDLE_THRESHOLD) {
-            int messages_read = read_log(buffer);
-            total_messages_read += messages_read;
-            
-            if (messages_read > 0) {
-                consecutive_empty_reads = 0;  // Reset counter
-            } else {
-                consecutive_empty_reads++;
-            }
-            
-           // sleep(1);  // Small delay between read attempts
-        }
+      uint32  num_of_children;
+      do {
+        num_of_children = *(uint32 *)buffer >> 16;
+        read_log(buffer);
 
-        printf("Parent finished reading %d total messages\n", total_messages_read);
+     } while (num_of_children);
+          
         
-        // Wait for all children to complete
-        for (int i = 0; i < NCHILDREN; i++) {
-            wait(0);
-        }
+        
+        // int consecutive_empty_reads = 0;
+        // int total_messages_read = 0;
+        // while (consecutive_empty_reads < IDLE_THRESHOLD) {
+        //     int messages_read = read_log(buffer);
+        //     total_messages_read += messages_read;
+            
+        //     if (messages_read > 0) {
+        //         consecutive_empty_reads = 0;  // Reset counter
+        //     } else {
+        //         consecutive_empty_reads++;
+        //     }
+            
+        // }
+
+        printf("Parent finished reading total messages\n");
+        
     }
 
     free(buffer);
