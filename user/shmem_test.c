@@ -69,23 +69,23 @@ void test2() {
     // Share memory
     else if (pid == 0) {
         // Child process
-        uint64 shared_address1 = (uint64)map_shared_pages(daddy, getpid(), buffer1, PGSIZE);
-        uint64 shared_address2 = (uint64)map_shared_pages(daddy, getpid(), buffer2, PGSIZE);
-        if(shared_address1 == (uint64)-1 || shared_address2 == (uint64)-1){
+        char* shared_memory1 = map_shared_pages(daddy, getpid(), buffer1, PGSIZE);
+        char* shared_memory2 = map_shared_pages(daddy, getpid(), buffer2, PGSIZE);
+        if((uint64)shared_memory1 == (uint64)-1 || (uint64)shared_memory2 == (uint64)-1){
             printf("failed to share buffers\n");
             exit(1);
         }else{
             printf("successfully shared 2 buffers\n");
+            printf("Child shared1: %p, shared2: %p\n", shared_memory1, shared_memory2);
         }
-        char* shared_memory1 = (char*)shared_address1;
-        char* shared_memory2 = (char*)shared_address2;
 
         // Use the shared memory
         strcpy(shared_memory1, "Hello daddy");
         strcpy(shared_memory2, "Hello daddy 2");
+        unmap_shared_pages(getpid(), shared_memory2, PGSIZE);
+        printf("buffer2 unshared\n");
         unmap_shared_pages(getpid(), shared_memory1, PGSIZE);
         printf("buffer1 unshared\n");
-        unmap_shared_pages(getpid(), shared_memory2, PGSIZE);
     }
     else {
         // Parent process
@@ -100,8 +100,7 @@ void test2() {
 int main(int argc, char *argv[])
 {  
 
-    // shmem_test(0);
-    // shmem_test(1);
-    test2();
+    shmem_test(0);
+    shmem_test(1);
     exit(0);
 }
