@@ -194,50 +194,130 @@ void test1() {
     exit(0);
 }
 
+
 void test2() {
-  printf("============= test 2 =================================\n");
+  printf("=== Test 3: Different Message Lengths ===\n");
   char *buffer = malloc(PGSIZE);
     if (buffer == 0) {
         printf("ERROR: Failed to allocate buffer\n");
         exit(1);
     }
     memset(buffer, 0, PGSIZE);
-    *((uint32 *)buffer) = 1 << 16; 
+    *((uint32 *)buffer) = NCHILDREN << 16; 
     int dad_pid = getpid();
-    int my_pid;
-    printf("ready\n");
-    my_pid = fork();
-    if (my_pid < 0) {
-        printf("ERROR: Fork failed\n");
-        exit(1);
-    } 
-    
+    int child_index, my_pid;
+
+    for (child_index = 0; child_index < NCHILDREN; child_index++) {
+        my_pid = fork();
+        if (my_pid < 0) {
+            printf("ERROR: Fork failed\n");
+            exit(1);
+        }
+        if (my_pid == 0) break;  
+    }
 
     if (my_pid == 0) {
         char *sh_buffer = map_shared_pages(dad_pid, getpid(), buffer, PGSIZE);
         if (sh_buffer == (char *)-1) {
-            printf("ERROR: Child failed to map shared memory\n");
+            printf("ERROR: Child %d failed to map shared memory\n", child_index);
             exit(1);
         }
-        char msg[1001];
-        memset(msg,1,1001);
-        write_log(sh_buffer,1,msg);
+
+        // Different message lengths for each child
+        if (child_index == 0) {
+            // Short messages (10-15 chars)
+            write_log(sh_buffer, child_index, "Short 0");
+            write_log(sh_buffer, child_index, "Brief msg 1");
+            write_log(sh_buffer, child_index, "Tiny text 2");
+            write_log(sh_buffer, child_index, "Small 3");
+            write_log(sh_buffer, child_index, "Quick note 4");
+        } 
+        else if (child_index == 1) {
+            // Medium messages (30-50 chars)
+            write_log(sh_buffer, child_index, "Medium length message from child 1");
+            write_log(sh_buffer, child_index, "This is a moderate sized text msg 2");
+            write_log(sh_buffer, child_index, "Another medium message number three");
+            write_log(sh_buffer, child_index, "Child 1 sends medium length msg 4");
+        }
+        else if (child_index == 2) {
+            // Long messages (80+ chars)
+            write_log(sh_buffer, child_index, "This is a very long message from child 2 that contains much more text to test");
+            write_log(sh_buffer, child_index, "Another extremely long message with lots of content to verify the system handles");
+            write_log(sh_buffer, child_index, "Child 2 is sending very lengthy messages to test buffer capacity and handling");
+        }
+        else if (child_index == 3) {
+            // Very short messages (3-8 chars)
+            write_log(sh_buffer, child_index, "Hi");
+            write_log(sh_buffer, child_index, "Hey");
+            write_log(sh_buffer, child_index, "Yo");
+            write_log(sh_buffer, child_index, "Test");
+            write_log(sh_buffer, child_index, "Done");
+        }
+
+        printf("Child %d finished writing messages\n", child_index);
         custom_exit(sh_buffer);
         unmap_shared_pages(getpid(), sh_buffer, PGSIZE);
-
         exit(0);
         
     } else {
-        // Parent process - continuous reading
-      uint32  num_of_children;
-      do {
-        num_of_children = *(uint32 *)buffer >> 16;
-        read_log(buffer);
-
-     } while (num_of_children);
-
-        printf("Parent finished reading total messages\n");
+        // Parent process - read and verify
+        printf("Parent starting to read messages\n");
         
+        uint32 num_of_children;
+        int total_messages = 0;
+        int child_message_count[NCHILDREN] = {0, 0, 0, 0};
+        
+        do {
+            num_of_children = *(uint32 *)buffer >> 16;
+            
+            // Read messages
+            char *p = buffer + 4; // Skip the children counter
+            while (p + 4 < buffer + PGSIZE) {
+                uint32 header = *(uint32 *)p;
+                
+                if (header == 0) {
+                    p += 4;
+                    p = (char *)(((uint64)p + 3) & ~3);
+                    continue;
+                }
+
+                uint16 child_id = (header >> 16) & 0x7FFF;
+                uint16 len = header & 0xFFFF;
+                
+                // Check if message is complete and not already read
+                if ((header & 0x80000000) && child_id != 0x7FFF && child_id < NCHILDREN) {
+                    if (p + 4 + len >= buffer + PGSIZE) break;
+                    
+                    char msg[len + 1];
+                    memmove(msg, p + 4, len);
+                    msg[len] = '\0';
+                    
+                    printf("Parent received from child %d (len=%d): %s\n", child_id, len, msg);
+                    child_message_count[child_id]++;
+                    total_messages++;
+                    
+                    // Mark as read
+                    uint32 new_header = (0x7FFF << 16) | len | 0x80000000;
+                    *((uint32 *)p) = new_header;
+                }
+
+                p += 4 + len;
+                p = (char *)(((uint64)p + 3) & ~3);
+            }
+            
+        } while (num_of_children > 0);
+
+        printf("\n=== Test 3 Results ===\n");
+        printf("Total messages received: %d\n", total_messages);
+        for (int i = 0; i < NCHILDREN; i++) {
+            printf("Child %d sent %d messages\n", i, child_message_count[i]);
+        }
+        
+        if (total_messages > 0) {
+            printf("✓ SUCCESS: Different message lengths handled correctly\n");
+        } else {
+            printf("✗ FAILURE: No messages received\n");
+        }
     }
 
     free(buffer);
@@ -247,7 +327,7 @@ void test2() {
 int main(int argc, char *argv[]) {
   printf("main\n");
   test1();
-//   test2();
+// test2();
 
     
   return 0;
