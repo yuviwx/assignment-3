@@ -346,7 +346,6 @@ reparent(struct proc *p)
 void
 exit(int status)
 {
-  printf("Process %d exiting with status %d\n", myproc()->pid, status);
   struct proc *p = myproc();
 
   if(p == initproc)
