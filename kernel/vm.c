@@ -510,33 +510,33 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
   //acquire(&dst_proc->lock); 
   //acquire(&src_proc->lock);
 
-  if (src_proc < dst_proc) {
-    acquire(&src_proc->lock);
-    acquire(&dst_proc->lock);
-} else {
-    acquire(&dst_proc->lock);
-    acquire(&src_proc->lock);
-  }
-
-  // new page in distension
-  dst_va = PGROUNDUP(dst_proc->sz);
-  org_sz = dst_proc->sz; // for cleanup
-
-  // runner
-  cur_dst_va = dst_va;
-  offset = src_va - a;
-
-  for (;;)
-  {
-    // get pa
-    if ((pte_src = walk(src_proc->pagetable, a, 0)) == 0)
-    {
-      cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
-      //release(&src_proc->lock);
-      //release(&dst_proc->lock);
-      //return -1;
-      goto fail;
+    if (src_proc < dst_proc) {
+      acquire(&src_proc->lock);
+      acquire(&dst_proc->lock);
+  } else {
+      acquire(&dst_proc->lock);
+      acquire(&src_proc->lock);
     }
+
+    // new page in distension
+    dst_va = PGROUNDUP(dst_proc->sz);
+    org_sz = dst_proc->sz; // for cleanup
+
+    // runner
+    cur_dst_va = dst_va;
+    offset = src_va - a;
+
+    for (;;)
+    {
+      // get pa
+      if ((pte_src = walk(src_proc->pagetable, a, 0)) == 0)
+      {
+        cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
+        //release(&src_proc->lock);
+        //release(&dst_proc->lock);
+        //return -1;
+        goto fail;
+      }
 
     if (!(*pte_src & PTE_V) || !(*pte_src & PTE_U))
     {
@@ -559,26 +559,25 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
       goto fail;
     }
 
-    // Update process size after each successful mapping
-    dst_proc->sz = cur_dst_va + PGSIZE;
+      // Update process size after each successful mapping
+      dst_proc->sz = cur_dst_va + PGSIZE;
 
-    // update and ends the loop
-    if (a == last)
-      break;
-    a += PGSIZE;
-    cur_dst_va += PGSIZE;
-  }
-  //release(&src_proc->lock);
-  //release(&dst_proc->lock);
-  if (src_proc < dst_proc) {
-    release(&dst_proc->lock);
-    release(&src_proc->lock);
-} else {
-    release(&src_proc->lock);
-    release(&dst_proc->lock);
-  }
-  return dst_va + offset;
-}
+      // update and ends the loop
+      if (a == last)
+        break;
+      a += PGSIZE;
+      cur_dst_va += PGSIZE;
+    }
+    //release(&src_proc->lock);
+    //release(&dst_proc->lock);
+    if (src_proc < dst_proc) {
+      release(&dst_proc->lock);
+      release(&src_proc->lock);
+   } else {
+      release(&src_proc->lock);
+      release(&dst_proc->lock);
+    }
+    return dst_va + offset;
 
 fail:
   if (src_proc < dst_proc) {
@@ -589,6 +588,9 @@ fail:
     release(&dst_proc->lock);
   }
   return -1;
+}
+
+  
 
 // Unmap the shared memory from the destination process
 uint64 unmap_shared_pages(struct proc *p, uint64 addr, uint64 size)
