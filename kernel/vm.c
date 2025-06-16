@@ -507,8 +507,16 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
   last = PGROUNDDOWN(src_va + size - 1);
 
   // Lock to avoide race conditions
-  acquire(&dst_proc->lock); 
-  acquire(&src_proc->lock);
+  //acquire(&dst_proc->lock); 
+  //acquire(&src_proc->lock);
+
+  if (src_proc < dst_proc) {
+    acquire(&src_proc->lock);
+    acquire(&dst_proc->lock);
+} else {
+    acquire(&dst_proc->lock);
+    acquire(&src_proc->lock);
+  }
 
   // new page in distension
   dst_va = PGROUNDUP(dst_proc->sz);
@@ -524,17 +532,19 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
     if ((pte_src = walk(src_proc->pagetable, a, 0)) == 0)
     {
       cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
-      release(&src_proc->lock);
-      release(&dst_proc->lock);
-      return -1;
+      //release(&src_proc->lock);
+      //release(&dst_proc->lock);
+      //return -1;
+      goto fail;
     }
 
     if (!(*pte_src & PTE_V) || !(*pte_src & PTE_U))
     {
       cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
-      release(&src_proc->lock);
-      release(&dst_proc->lock);
-      return -1;
+      //release(&src_proc->lock);
+      //release(&dst_proc->lock);
+      //return -1;
+      goto fail;
     }
 
     pa = PTE2PA(*pte_src);
@@ -543,9 +553,10 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
     if (mappages(dst_proc->pagetable, cur_dst_va, PGSIZE, pa, flags) != 0)
     {
       cleanup(dst_proc, dst_va, ((cur_dst_va - dst_va) / PGSIZE), org_sz);
-      release(&src_proc->lock);
-      release(&dst_proc->lock);
-      return -1;
+      //release(&src_proc->lock);
+      //release(&dst_proc->lock);
+      //return -1;
+      goto fail;
     }
 
     // Update process size after each successful mapping
@@ -557,10 +568,27 @@ uint64 map_shared_pages(struct proc *src_proc, struct proc *dst_proc,
     a += PGSIZE;
     cur_dst_va += PGSIZE;
   }
-  release(&src_proc->lock);
-  release(&dst_proc->lock);
+  //release(&src_proc->lock);
+  //release(&dst_proc->lock);
+  if (src_proc < dst_proc) {
+    release(&dst_proc->lock);
+    release(&src_proc->lock);
+} else {
+    release(&src_proc->lock);
+    release(&dst_proc->lock);
+  }
   return dst_va + offset;
 }
+
+fail:
+  if (src_proc < dst_proc) {
+    release(&dst_proc->lock);
+    release(&src_proc->lock);
+} else {
+    release(&src_proc->lock);
+    release(&dst_proc->lock);
+  }
+  return -1;
 
 // Unmap the shared memory from the destination process
 uint64 unmap_shared_pages(struct proc *p, uint64 addr, uint64 size)
