@@ -154,7 +154,7 @@ void test1() {
             }
             
             // Small delay between messages to allow interleaving
-            // if (i % 3 == 0) sleep(1);
+            if (i % 3 == 0) sleep(1);
         }
         custom_exit(sh_buffer);
         unmap_shared_pages(getpid(), sh_buffer, PGSIZE);
